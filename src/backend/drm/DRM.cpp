@@ -3,6 +3,7 @@
 #include <aquamarine/backend/DRM.hpp>
 #include <aquamarine/backend/drm/Legacy.hpp>
 #include <aquamarine/backend/drm/Atomic.hpp>
+#include <aquamarine/backend/drm/BufferLifetime.hpp>
 #include <aquamarine/allocator/GBM.hpp>
 #include <aquamarine/allocator/DRMDumb.hpp>
 #include <cstdint>
@@ -1137,7 +1138,7 @@ int Aquamarine::CDRMBackend::drmRenderNodeFD() {
 }
 
 static void present(SDRMPageFlip* pageFlip) {
-	pageFlip->connector->sched.onFrameComplete();
+    pageFlip->connector->sched.onFrameComplete();
 
     const auto& BACKEND = pageFlip->connector->backend;
 
@@ -1521,39 +1522,37 @@ void Aquamarine::SDRMConnector::parseTileInfo() {
 }
 
 void Aquamarine::SDRMConnector::releaseFBReferences() {
-    std::unordered_set<IBuffer*> releasedBuffers;
-
-    const auto                   releaseFB = [&releasedBuffers](SP<CDRMFB>& fb) {
-        if (!fb) {
+    std::vector<SP<IBuffer>> retired;
+    const auto               retireFB = [&retired](SP<CDRMFB>& fb) {
+        if (fb) {
+            if (const auto BUFFER = fb->buffer.lock(); BUFFER && std::ranges::none_of(retired, [&BUFFER](const auto& other) { return other == BUFFER; }))
+                retired.emplace_back(BUFFER);
             fb.reset();
-            return;
         }
-
-        if (auto buf = fb->buffer.lock(); buf && buf->lockedByBackend && releasedBuffers.emplace(buf.get()).second) {
-            buf->lockedByBackend = false;
-            buf->events.backendRelease.emit();
-        }
-
-        fb.reset();
     };
 
     if (crtc) {
         if (crtc->primary) {
-            releaseFB(crtc->primary->front);
-            releaseFB(crtc->primary->back);
-            releaseFB(crtc->primary->last);
+            retireFB(crtc->primary->front);
+            retireFB(crtc->primary->back);
+            retireFB(crtc->primary->last);
         }
 
         if (crtc->cursor) {
-            releaseFB(crtc->cursor->front);
-            releaseFB(crtc->cursor->back);
-            releaseFB(crtc->cursor->last);
+            retireFB(crtc->cursor->front);
+            retireFB(crtc->cursor->back);
+            retireFB(crtc->cursor->last);
         }
 
-        releaseFB(crtc->pendingCursor);
+        retireFB(crtc->pendingCursor);
     }
 
-    releaseFB(pendingCursorFB);
+    retireFB(pendingCursorFB);
+
+    for (const auto& BUFFER : retired)
+        releaseBufferIfUnused(BUFFER);
+
+    releaseStashedCommit();
 }
 
 Aquamarine::SDRMConnector::~SDRMConnector() {
@@ -1848,33 +1847,89 @@ void Aquamarine::SDRMConnector::drainStashedCommit() {
     // A newer flip in flight means an emit in handlePF already submitted fresher content; the stash is stale, drop it.
     const bool canDrain = backend->sessionActive() && output->enabledState && !sched.frameInFlight();
     if (!canDrain) {
-        releaseCommitBuffers(*nextCommit);
-        nextCommit.reset();
+        releaseStashedCommit();
         return;
     }
 
     SDRMConnectorCommitData draining = std::move(*nextCommit);
     nextCommit.reset();
-    if (!commitState(draining))
+    if (!commitState(draining)) {
+        releaseCommitBuffers(draining);
         backend->log(AQ_LOG_ERROR, std::format("drm: drain of coalesced commit failed for {}", szName));
+    }
 }
 
 void Aquamarine::SDRMConnector::releaseCommitBuffers(SDRMConnectorCommitData& commit) {
-    if (commit.mainFB) {
-        commit.mainFB->buffer->lockedByBackend = false;
-        commit.mainFB->buffer->events.backendRelease.emit();
+    std::vector<SP<IBuffer>> retired;
+    const auto               retireFB = [&retired](SP<CDRMFB>& fb) {
+        if (!fb)
+            return;
+        if (const auto BUFFER = fb->buffer.lock(); BUFFER && std::ranges::none_of(retired, [&BUFFER](const auto& other) { return other == BUFFER; }))
+            retired.emplace_back(BUFFER);
+        fb.reset();
+    };
+
+    retireFB(commit.mainFB);
+    retireFB(commit.cursorFB);
+    for (const auto& BUFFER : retired)
+        releaseBufferIfUnused(BUFFER);
+}
+
+bool Aquamarine::SDRMConnector::bufferReferenced(IBuffer* buffer) const {
+    if (!buffer)
+        return false;
+
+    std::vector<const void*> liveBuffers;
+    const auto               APPEND = [&liveBuffers](const SP<CDRMFB>& fb) {
+        if (fb && fb->buffer)
+            liveBuffers.emplace_back(fb->buffer.get());
+    };
+    if (crtc) {
+        if (crtc->primary) {
+            APPEND(crtc->primary->front);
+            APPEND(crtc->primary->back);
+            APPEND(crtc->primary->last);
+        }
+        if (crtc->cursor) {
+            APPEND(crtc->cursor->front);
+            APPEND(crtc->cursor->back);
+            APPEND(crtc->cursor->last);
+        }
+        APPEND(crtc->pendingCursor);
     }
-    if (crtc && crtc->cursor && commit.cursorFB) {
-        commit.cursorFB->buffer->lockedByBackend = false;
-        commit.cursorFB->buffer->events.backendRelease.emit();
+    APPEND(pendingCursorFB);
+    if (nextCommit) {
+        APPEND(nextCommit->mainFB);
+        APPEND(nextCommit->cursorFB);
     }
+
+    return drmBufferIsReferenced(buffer, liveBuffers);
+}
+
+void Aquamarine::SDRMConnector::releaseBufferIfUnused(SP<IBuffer> buffer) {
+    if (!buffer || !buffer->lockedByBackend)
+        return;
+
+    const bool REFERENCED = bufferReferenced(buffer.get());
+    TRACE(backend->backend->log(
+        AQ_LOG_TRACE, std::format("drm: buffer lifetime {:x}: {} after plane rotation", rc<uintptr_t>(buffer.get()), REFERENCED ? "retain (still referenced)" : "release")));
+    if (REFERENCED)
+        return;
+
+    buffer->lockedByBackend = false;
+    buffer->events.backendRelease.emit();
 }
 
 void Aquamarine::SDRMConnector::releaseStashedCommit() {
     if (!nextCommit)
         return;
-    releaseCommitBuffers(*nextCommit);
+
+    // Detach the commit before checking its buffers against the remaining live
+    // DRM slots. Otherwise bufferReferenced() observes the commit being retired
+    // through nextCommit and suppresses its final backendRelease forever.
+    auto retired = std::move(*nextCommit);
     nextCommit.reset();
+    releaseCommitBuffers(retired);
 }
 
 void Aquamarine::SDRMConnector::applyCommit(const SDRMConnectorCommitData& data) {
@@ -1931,21 +1986,29 @@ void Aquamarine::SDRMConnector::rollbackCommit(const SDRMConnectorCommitData& da
 }
 
 void Aquamarine::SDRMConnector::onPresent() {
-    crtc->primary->last  = crtc->primary->front;
-    crtc->primary->front = crtc->primary->back;
-    if (crtc->primary->last && crtc->primary->last->buffer) {
-        crtc->primary->last->buffer->lockedByBackend = false;
-        crtc->primary->last->buffer->events.backendRelease.emit();
-    }
+    std::vector<SP<IBuffer>> retired;
+    const auto               retireFB = [&retired](SP<CDRMFB>& fb) {
+        if (!fb)
+            return;
+        if (const auto BUFFER = fb->buffer.lock(); BUFFER && std::ranges::none_of(retired, [&BUFFER](const auto& other) { return other == BUFFER; }))
+            retired.emplace_back(BUFFER);
+        fb.reset();
+    };
+
+    retireFB(crtc->primary->last);
+    crtc->primary->last  = std::move(crtc->primary->front);
+    crtc->primary->front = std::move(crtc->primary->back);
+    retireFB(crtc->primary->last);
 
     if (crtc->cursor) {
-        crtc->cursor->last  = crtc->cursor->front;
-        crtc->cursor->front = crtc->cursor->back;
-        if (crtc->cursor->last && crtc->cursor->last->buffer) {
-            crtc->cursor->last->buffer->lockedByBackend = false;
-            crtc->cursor->last->buffer->events.backendRelease.emit();
-        }
+        retireFB(crtc->cursor->last);
+        crtc->cursor->last  = std::move(crtc->cursor->front);
+        crtc->cursor->front = std::move(crtc->cursor->back);
+        retireFB(crtc->cursor->last);
     }
+
+    for (const auto& BUFFER : retired)
+        releaseBufferIfUnused(BUFFER);
 }
 
 Aquamarine::CDRMOutput::~CDRMOutput() {

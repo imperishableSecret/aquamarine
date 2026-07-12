@@ -343,6 +343,8 @@ namespace Aquamarine {
         // Releases the buffers held by a commit; does not touch nextCommit. Shared
         // by releaseStashedCommit() and drainStashedCommit()'s drop path.
         void releaseCommitBuffers(SDRMConnectorCommitData& commit);
+        bool bufferReferenced(IBuffer* buffer) const;
+        void releaseBufferIfUnused(Hyprutils::Memory::CSharedPointer<IBuffer> buffer);
         // Drain the coalesce slot (submit the stashed commit, or drop it if a
         // newer flip is already in flight / the output went away). Called from
         // handlePF once the pending flip completes.

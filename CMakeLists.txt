@@ -149,6 +149,11 @@ add_test(
   COMMAND attachments "attachments")
 add_dependencies(tests attachments)
 
+add_executable(drmBufferLifetime "tests/DRMBufferLifetime.cpp")
+target_link_libraries(drmBufferLifetime PRIVATE PkgConfig::deps aquamarine)
+add_test(NAME "drmBufferLifetime" COMMAND drmBufferLifetime)
+add_dependencies(tests drmBufferLifetime)
+
 # Installation
 install(TARGETS aquamarine)
 install(DIRECTORY "include/aquamarine" DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
