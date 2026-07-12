@@ -3,6 +3,8 @@
 #include "../DRM.hpp"
 
 namespace Aquamarine {
+    bool drmDamageNeedsBlob(const Hyprutils::Math::CRegion& damage, const Hyprutils::Math::Vector2D& modeSize);
+
     class CDRMAtomicImpl : public IDRMImplementation {
       public:
         CDRMAtomicImpl(Hyprutils::Memory::CSharedPointer<CDRMBackend> backend_);

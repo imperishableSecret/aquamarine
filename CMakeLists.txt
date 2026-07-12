@@ -154,6 +154,11 @@ target_link_libraries(outputState PRIVATE PkgConfig::deps aquamarine)
 add_test(NAME "outputState" COMMAND outputState)
 add_dependencies(tests outputState)
 
+add_executable(drmDamage "tests/DRMDamage.cpp")
+target_link_libraries(drmDamage PRIVATE PkgConfig::deps aquamarine)
+add_test(NAME "drmDamage" COMMAND drmDamage)
+add_dependencies(tests drmDamage)
+
 add_executable(drmBufferLifetime "tests/DRMBufferLifetime.cpp")
 target_link_libraries(drmBufferLifetime PRIVATE PkgConfig::deps aquamarine)
 add_test(NAME "drmBufferLifetime" COMMAND drmBufferLifetime)

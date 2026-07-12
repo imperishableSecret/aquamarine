@@ -14,6 +14,16 @@ using namespace Hyprutils::Memory;
 using namespace Hyprutils::Math;
 #define SP CSharedPointer
 
+bool Aquamarine::drmDamageNeedsBlob(const CRegion& damage, const Vector2D& modeSize) {
+    const CBox MODE_BOUNDS{{}, modeSize};
+    auto       clipped = damage.copy().intersect(MODE_BOUNDS);
+    if (clipped.empty())
+        return false;
+
+    auto uncovered = CRegion{MODE_BOUNDS}.subtract(clipped);
+    return !uncovered.empty();
+}
+
 // HW capabilites aren't checked. Should be handled by the drivers (and highly unlikely to get a format outside of bpc range)
 // https://drmdb.emersion.fr/properties/3233857728/max%20bpc
 static uint8_t getMaxBPC(uint64_t min, uint64_t max, uint32_t drmFormat) {
@@ -468,11 +478,13 @@ bool Aquamarine::CDRMAtomicImpl::prepareConnector(Hyprutils::Memory::CSharedPoin
     }
 
     if ((data.committed & COutputState::AQ_OUTPUT_STATE_DAMAGE) && connector->crtc->primary->props.values.fb_damage_clips && MODE) {
-        if (data.damage.empty())
+        auto clippedDamage = data.damage.copy().intersect(CBox{{}, MODE->pixelSize});
+        if (!drmDamageNeedsBlob(clippedDamage, MODE->pixelSize)) {
+            TRACE(connector->backend->backend->log(AQ_LOG_TRACE, "atomic drm: eliding empty or full damage blob"));
             data.atomic.fbDamage = 0;
-        else {
+        } else {
             TRACE(connector->backend->backend->log(AQ_LOG_TRACE, std::format("atomic drm: clipping damage to pixel size {}", MODE->pixelSize)));
-            std::vector<pixman_box32_t> rects = data.damage.copy().intersect(CBox{{}, MODE->pixelSize}).getRects();
+            const auto rects = clippedDamage.getRects();
             if (drmModeCreatePropertyBlob(connector->backend->gpu->fd, rects.data(), sizeof(pixman_box32_t) * rects.size(), &data.atomic.fbDamage)) {
                 connector->backend->backend->log(AQ_LOG_ERROR, "atomic drm: failed to create a damage blob");
                 return false;
