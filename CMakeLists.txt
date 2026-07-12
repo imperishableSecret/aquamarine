@@ -164,6 +164,11 @@ target_link_libraries(drmBufferLifetime PRIVATE PkgConfig::deps aquamarine)
 add_test(NAME "drmBufferLifetime" COMMAND drmBufferLifetime)
 add_dependencies(tests drmBufferLifetime)
 
+add_executable(drmFormatPolicy "tests/DRMFormatPolicy.cpp")
+target_link_libraries(drmFormatPolicy PRIVATE PkgConfig::deps aquamarine)
+add_test(NAME "drmFormatPolicy" COMMAND drmFormatPolicy)
+add_dependencies(tests drmFormatPolicy)
+
 # Installation
 install(TARGETS aquamarine)
 install(DIRECTORY "include/aquamarine" DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})

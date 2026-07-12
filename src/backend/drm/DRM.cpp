@@ -4,6 +4,7 @@
 #include <aquamarine/backend/drm/Legacy.hpp>
 #include <aquamarine/backend/drm/Atomic.hpp>
 #include <aquamarine/backend/drm/BufferLifetime.hpp>
+#include <aquamarine/backend/drm/FormatPolicy.hpp>
 #include <aquamarine/allocator/GBM.hpp>
 #include <aquamarine/allocator/DRMDumb.hpp>
 #include <cstdint>
@@ -2223,14 +2224,21 @@ bool Aquamarine::CDRMOutput::commitState(bool onlyTest) {
     bool formatMismatch = false;
     if (data.mainFB) {
         if (const auto params = data.mainFB->buffer->dmabuf(); params.success && params.format != STATE.drmFormat) {
-            // formats mismatch. Update the state format and roll with it
-            backend->backend->log(AQ_LOG_WARNING,
-                                  std::format("drm: Formats mismatch in commit, buffer is {} but output is set to {}. Modesetting to {}", fourccToName(params.format),
-                                              fourccToName(STATE.drmFormat), fourccToName(params.format)));
-            state->setFormat(params.format);
-            formatMismatch = true;
-            // TODO: reject if tearing? We will miss a frame event!
-            flags &= ~DRM_MODE_PAGE_FLIP_ASYNC; // we cannot modeset with async pf
+            if (drmBufferFormatRequiresLegacyReconfigure(STATE.directScanoutBuffer, STATE.drmFormat, params.format)) {
+                // Legacy consumers expect an attached compositor buffer to define
+                // the output format. Preserve that behavior unless they explicitly
+                // selected the direct-scanout API.
+                backend->backend->log(AQ_LOG_WARNING,
+                                      std::format("drm: Formats mismatch in commit, buffer is {} but output is set to {}. Modesetting to {}", fourccToName(params.format),
+                                                  fourccToName(STATE.drmFormat), fourccToName(params.format)));
+                state->setFormat(params.format);
+                formatMismatch = true;
+                // TODO: reject if tearing? We will miss a frame event!
+                flags &= ~DRM_MODE_PAGE_FLIP_ASYNC; // we cannot modeset with async pf
+            } else
+                TRACE(backend->backend->log(
+                    AQ_LOG_TRACE,
+                    std::format("drm: Validating direct scanout buffer format {} while preserving output format {}", fourccToName(params.format), fourccToName(STATE.drmFormat))));
         }
     }
 

@@ -104,7 +104,14 @@ void Aquamarine::COutputState::setFormat(uint32_t drmFormat) {
 }
 
 void Aquamarine::COutputState::setBuffer(Hyprutils::Memory::CSharedPointer<IBuffer> buffer) {
-    internalState.buffer = buffer;
+    internalState.buffer              = buffer;
+    internalState.directScanoutBuffer = false;
+    internalState.committed |= AQ_OUTPUT_STATE_BUFFER;
+}
+
+void Aquamarine::COutputState::setScanoutBuffer(Hyprutils::Memory::CSharedPointer<IBuffer> buffer) {
+    internalState.buffer              = buffer;
+    internalState.directScanoutBuffer = true;
     internalState.committed |= AQ_OUTPUT_STATE_BUFFER;
 }
 

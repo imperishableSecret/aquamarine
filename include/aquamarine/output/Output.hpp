@@ -75,6 +75,7 @@ namespace Aquamarine {
             Hyprutils::Memory::CSharedPointer<SOutputMode> customMode;
             uint32_t                                       drmFormat = DRM_FORMAT_INVALID;
             Hyprutils::Memory::CSharedPointer<IBuffer>     buffer;
+            bool                                           directScanoutBuffer = false;
             int32_t                                        explicitInFence = -1, explicitOutFence = -1;
             Hyprutils::Math::Mat3x3                        ctm            = Hyprutils::Math::Mat3x3::identity();
             bool                                           wideColorGamut = false;
@@ -95,6 +96,7 @@ namespace Aquamarine {
         void                  setCustomMode(Hyprutils::Memory::CSharedPointer<SOutputMode> mode);
         void                  setFormat(uint32_t drmFormat);
         void                  setBuffer(Hyprutils::Memory::CSharedPointer<IBuffer> buffer);
+        void                  setScanoutBuffer(Hyprutils::Memory::CSharedPointer<IBuffer> buffer);
         void                  setExplicitInFence(int32_t fenceFD); // -1 removes
         void                  enableExplicitOutFenceForNextCommit();
         void                  resetExplicitFences();
