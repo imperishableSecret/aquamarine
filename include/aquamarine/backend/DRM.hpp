@@ -253,6 +253,9 @@ namespace Aquamarine {
 
     struct SDRMPageFlip {
         Hyprutils::Memory::CWeakPointer<SDRMConnector> connector;
+        uint64_t                                       presentationID = 0;
+
+        bool                                           zeroCopy() const;
     };
 
     struct SDRMConnectorCommitData {

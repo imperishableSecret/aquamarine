@@ -67,9 +67,10 @@ namespace Aquamarine {
         void                                              onEnter(Hyprutils::Memory::CSharedPointer<CCWlPointer> pointer, uint32_t serial);
 
         // frame loop — unified scheduler shared with DRM. See CFrameScheduler.
-        CFrameScheduler                                   sched;
-        Hyprutils::Signal::CHyprSignalListener            frameReadyListener;
+        CFrameScheduler                                              sched;
+        Hyprutils::Signal::CHyprSignalListener                       frameReadyListener;
         Hyprutils::Memory::CSharedPointer<std::function<void(void)>> frameIdle;
+        uint64_t                                                     pendingPresentationID = 0;
 
         struct {
             std::vector<std::pair<Hyprutils::Memory::CWeakPointer<IBuffer>, Hyprutils::Memory::CSharedPointer<CWaylandBuffer>>> buffers;

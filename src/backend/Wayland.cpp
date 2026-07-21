@@ -10,6 +10,7 @@
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <unistd.h>
+#include <utility>
 
 using namespace Aquamarine;
 using namespace Hyprutils::Memory;
@@ -569,6 +570,7 @@ Aquamarine::CWaylandOutput::CWaylandOutput(const std::string& name_, Hyprutils::
 }
 
 Aquamarine::CWaylandOutput::~CWaylandOutput() {
+    pendingPresentationID = 0;
     events.destroy.emit();
     // frameIdle captures a raw this and may still be queued; pull it before we die.
     backend->backend->removeIdleEvent(frameIdle);
@@ -597,6 +599,7 @@ bool Aquamarine::CWaylandOutput::pendingIdleFrame() {
 
 bool Aquamarine::CWaylandOutput::destroy() {
     events.destroy.emit();
+    pendingPresentationID = 0;
     waylandState.surface->sendAttach(nullptr, 0, 0);
     waylandState.surface->sendCommit();
     waylandState.frameCallback.reset();
@@ -630,6 +633,8 @@ bool Aquamarine::CWaylandOutput::commit() {
 
     if (!swapchain) {
         backend->backend->log(AQ_LOG_ERROR, std::format("Output {}: no swapchain, lying because it will soon be here", name));
+        if (state->internalState.presentationID != 0)
+            return false;
         return true;
     }
 
@@ -688,9 +693,15 @@ bool Aquamarine::CWaylandOutput::commit() {
     // becomes readable, and the frame loop deadlocks.
     wl_display_flush(backend->waylandState.display);
 
+    const uint64_t presentationID = state->internalState.committed & COutputState::AQ_OUTPUT_STATE_BUFFER ? state->internalState.presentationID : 0;
+    const uint64_t replacedID     = state->internalState.committed & COutputState::AQ_OUTPUT_STATE_BUFFER ? std::exchange(pendingPresentationID, presentationID) : 0;
+
     events.commit.emit();
     state->onCommit();
     needsFrame = false;
+
+    if (replacedID != 0)
+        events.present.emit(IOutput::SPresentEvent{.presented = false, .presentationID = replacedID});
 
     return true;
 }
@@ -730,7 +741,7 @@ void Aquamarine::CWaylandOutput::onFrameDone() {
 
     CFrameRunningGuard frameRunning(sched);
 
-    events.present.emit(IOutput::SPresentEvent{.presented = true});
+    events.present.emit(IOutput::SPresentEvent{.presented = true, .presentationID = std::exchange(pendingPresentationID, 0)});
 
     sched.frameReady.emit();
 }
