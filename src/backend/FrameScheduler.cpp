@@ -11,9 +11,10 @@ void CFrameScheduler::onFrameComplete() {
 }
 
 void CFrameScheduler::invalidate() {
-    m_pending        = false;
-    m_frameRunning   = false;
-    m_frameScheduled = false;
+    m_pending          = false;
+    m_frameRunning     = false;
+    m_frameScheduled   = false;
+    m_scheduleDeferred = false;
 }
 
 bool CFrameScheduler::frameInFlight() const {
@@ -38,6 +39,16 @@ bool CFrameScheduler::frameRunning() const {
 
 void CFrameScheduler::setFrameRunning(bool v) {
     m_frameRunning = v;
+}
+
+void CFrameScheduler::deferSchedule() {
+    m_scheduleDeferred = true;
+}
+
+bool CFrameScheduler::takeDeferredSchedule() {
+    const bool deferred = m_scheduleDeferred;
+    m_scheduleDeferred  = false;
+    return deferred;
 }
 
 CFrameRunningGuard::CFrameRunningGuard(CFrameScheduler& s) : m_s(s) {

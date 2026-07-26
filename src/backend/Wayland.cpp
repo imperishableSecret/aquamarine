@@ -739,11 +739,16 @@ void Aquamarine::CWaylandOutput::onFrameDone() {
     waylandState.frameCallback.reset();
     sched.onFrameComplete();
 
-    CFrameRunningGuard frameRunning(sched);
+    {
+        CFrameRunningGuard frameRunning(sched);
 
-    events.present.emit(IOutput::SPresentEvent{.presented = true, .presentationID = std::exchange(pendingPresentationID, 0)});
+        events.present.emit(IOutput::SPresentEvent{.presented = true, .presentationID = std::exchange(pendingPresentationID, 0)});
 
-    sched.frameReady.emit();
+        sched.frameReady.emit();
+    }
+
+    if (sched.takeDeferredSchedule() && sched.canSchedule())
+        scheduleFrame(AQ_SCHEDULE_RENDER_MONITOR);
 }
 
 bool Aquamarine::CWaylandOutput::setCursor(Hyprutils::Memory::CSharedPointer<IBuffer> buffer, const Hyprutils::Math::Vector2D& hotspot) {
@@ -850,6 +855,11 @@ void Aquamarine::CWaylandOutput::scheduleFrame(const scheduleFrameReason reason)
     TRACE(backend->backend->log(AQ_LOG_TRACE,
                                 std::format("CWaylandOutput::scheduleFrame: reason {}, needsFrame {}, canSchedule {}", (uint32_t)reason, needsFrame, sched.canSchedule())));
     needsFrame = true;
+
+    if (sched.frameRunning()) {
+        sched.deferSchedule();
+        return;
+    }
 
     if (!sched.canSchedule())
         return;

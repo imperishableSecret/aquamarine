@@ -39,13 +39,20 @@ namespace Aquamarine {
         bool frameRunning() const;
         void setFrameRunning(bool v);
 
+        // Preserve a schedule request made while frameReady is being emitted.
+        // The backend consumes it after the emission and queues an idle only if
+        // no submitted or already-scheduled frame will provide the next wake.
+        void deferSchedule();
+        bool takeDeferredSchedule();
+
         // Fires from onFrameComplete. The output wires this to events.frame.emit.
         Hyprutils::Signal::CSignalT<> frameReady;
 
       private:
-        bool m_pending        = false;
-        bool m_frameScheduled = false;
-        bool m_frameRunning   = false;
+        bool m_pending          = false;
+        bool m_frameScheduled   = false;
+        bool m_frameRunning     = false;
+        bool m_scheduleDeferred = false;
     };
 
     // RAII pair for isFrameRunning: set on ctor, cleared on every exit path so a
